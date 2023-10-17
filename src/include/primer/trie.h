@@ -8,6 +8,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -131,6 +132,9 @@ class Trie {
 
   // Get the root of the trie, should only be used in test cases.
   auto GetRoot() const -> std::shared_ptr<const TrieNode> { return root_; }
+
+  auto Dfs(std::string_view key, size_t idx, std::shared_ptr<const TrieNode> ptr) const
+      -> std::shared_ptr<const TrieNode>;
 };
 
 }  // namespace bustub
