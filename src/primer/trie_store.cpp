@@ -1,4 +1,5 @@
 #include "primer/trie_store.h"
+#include <optional>
 #include "common/exception.h"
 
 namespace bustub {
@@ -11,20 +12,57 @@ auto TrieStore::Get(std::string_view key) -> std::optional<ValueGuard<T>> {
   // (2) Lookup the value in the trie.
   // (3) If the value is found, return a ValueGuard object that holds a reference to the value and the
   //     root. Otherwise, return std::nullopt.
-  throw NotImplementedException("TrieStore::Get is not implemented.");
+  // throw NotImplementedException("TrieStore::Get is not implemented.");
+  root_lock_.lock();
+  auto trie = root_;
+  root_lock_.unlock();
+
+  if (auto valPtr = trie.Get<T>(key); valPtr != nullptr) {
+    return std::make_optional<ValueGuard<T>>(trie, *valPtr);
+  } else {
+    return std::nullopt;
+  }
 }
 
 template <class T>
 void TrieStore::Put(std::string_view key, T value) {
   // You will need to ensure there is only one writer at a time. Think of how you can achieve this.
   // The logic should be somehow similar to `TrieStore::Get`.
-  throw NotImplementedException("TrieStore::Put is not implemented.");
+  // throw NotImplementedException("TrieStore::Put is not implemented.");
+  // 先获取write_lock_, 再获取root_lock_, 防止并发插入时, 后来的线程获得旧的Trie
+  write_lock_.lock();
+  // 获取到trie后立刻释放root_lock_, 让读取线程可以读旧的trie
+  root_lock_.lock();
+  auto trie = root_;
+  root_lock_.unlock();
+
+  auto newTrie = trie.Put(key, std::move(value));
+
+  root_lock_.lock();
+  root_ = newTrie;
+  root_lock_.unlock();
+
+  write_lock_.unlock();
 }
 
 void TrieStore::Remove(std::string_view key) {
   // You will need to ensure there is only one writer at a time. Think of how you can achieve this.
   // The logic should be somehow similar to `TrieStore::Get`.
-  throw NotImplementedException("TrieStore::Remove is not implemented.");
+  // throw NotImplementedException("TrieStore::Remove is not implemented.");
+  // 先获取write_lock_, 再获取root_lock_, 防止并发删除时, 后来的线程获得旧的Trie
+  write_lock_.lock();
+  // 获取到trie后立刻释放root_lock_, 让读取线程可以读旧的trie
+  root_lock_.lock();
+  auto trie = root_;
+  root_lock_.unlock();
+
+  auto newTrie = trie.Remove(key);
+
+  root_lock_.lock();
+  root_ = newTrie;
+  root_lock_.unlock();
+
+  write_lock_.unlock();
 }
 
 // Below are explicit instantiation of template functions.
