@@ -47,7 +47,7 @@ auto Planner::GetFuncCallFromFactory(const std::string &func_name, std::vector<A
     throw Exception(fmt::format("the number of args is {}, should be 1.", args.size()));
   }
 
-  return std::make_shared<StringExpression>(args[0], StringExpressionType{func_name=="upper"});
+  return std::make_shared<StringExpression>(args[0], StringExpressionType{func_name == "upper"});
 }
 
 }  // namespace bustub

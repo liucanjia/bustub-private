@@ -1,6 +1,5 @@
 #include "primer/trie_store.h"
 #include <optional>
-#include "common/exception.h"
 
 namespace bustub {
 
@@ -17,11 +16,10 @@ auto TrieStore::Get(std::string_view key) -> std::optional<ValueGuard<T>> {
   auto trie = root_;
   root_lock_.unlock();
 
-  if (auto valPtr = trie.Get<T>(key); valPtr != nullptr) {
-    return std::make_optional<ValueGuard<T>>(trie, *valPtr);
-  } else {
-    return std::nullopt;
+  if (auto val_ptr = trie.Get<T>(key); val_ptr != nullptr) {
+    return std::make_optional<ValueGuard<T>>(trie, *val_ptr);
   }
+  return std::nullopt;
 }
 
 template <class T>
@@ -36,10 +34,10 @@ void TrieStore::Put(std::string_view key, T value) {
   auto trie = root_;
   root_lock_.unlock();
 
-  auto newTrie = trie.Put(key, std::move(value));
+  auto new_trie = trie.Put(key, std::move(value));
 
   root_lock_.lock();
-  root_ = newTrie;
+  root_ = new_trie;
   root_lock_.unlock();
 
   write_lock_.unlock();
@@ -56,10 +54,10 @@ void TrieStore::Remove(std::string_view key) {
   auto trie = root_;
   root_lock_.unlock();
 
-  auto newTrie = trie.Remove(key);
+  auto new_trie = trie.Remove(key);
 
   root_lock_.lock();
-  root_ = newTrie;
+  root_ = new_trie;
   root_lock_.unlock();
 
   write_lock_.unlock();
