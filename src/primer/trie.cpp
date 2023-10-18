@@ -31,8 +31,10 @@ auto Trie::Get(std::string_view key) const -> const T * {
 
   auto resultNode = dynamic_cast<const TrieNodeWithValue<T> *>(tmpNode.get());
   if (resultNode == nullptr) {
+    // 节点没有存储value, 返回nullptr
     return nullptr;
   } else {
+    // 返回value的指针
     return resultNode->value_.get();
   }
 }
