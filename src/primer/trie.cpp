@@ -97,7 +97,7 @@ auto Trie::Put(std::string_view key, T value) const -> Trie {
   }
 
   ptr->children_[key.back()] = node;
-  
+
   return Trie(new_root);
 }
 
