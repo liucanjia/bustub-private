@@ -71,32 +71,33 @@ auto Trie::Put(std::string_view key, T value) const -> Trie {
 
   auto ptr = new_root;
   std::shared_ptr<TrieNode> node;
-  for (size_t idx = 0; idx < key.length(); idx++) {
+  for (size_t idx = 0; idx < key.length() - 1; idx++) {
     // 按照key依次遍历Trie
     auto ch = key[idx];
-    if (idx < key.length() - 1) {
-      // 中间节点
-      if (auto it = ptr->children_.find(ch); it != ptr->children_.end()) {
-        node = std::shared_ptr<TrieNode>(it->second->Clone());
-      } else {
-        node = std::make_unique<TrieNode>();
-      }
+    // 中间节点
+    if (auto it = ptr->children_.find(ch); it != ptr->children_.end()) {
+      node = std::shared_ptr<TrieNode>(it->second->Clone());
     } else {
-      // 最后一个节点
-      if (auto it = ptr->children_.find(key.back()); it != ptr->children_.end()) {
-        // 插入位置在已有节点
-        node = std::dynamic_pointer_cast<TrieNode>(
-            std::make_shared<TrieNodeWithValue<T>>(it->second->children_, std::make_shared<T>(std::move(value))));
-      } else {
-        // 插入位置为新节点
-        node = std::dynamic_pointer_cast<TrieNode>(
-            std::make_shared<TrieNodeWithValue<T>>(std::make_shared<T>(std::move(value))));
-      }
+      node = std::make_unique<TrieNode>();
     }
+
     ptr->children_[ch] = node;
     ptr = node;
   }
 
+  // 最后一个节点
+  if (auto it = ptr->children_.find(key.back()); it != ptr->children_.end()) {
+    // 插入位置在已有节点
+    node = std::dynamic_pointer_cast<TrieNode>(
+        std::make_shared<TrieNodeWithValue<T>>(it->second->children_, std::make_shared<T>(std::move(value))));
+  } else {
+    // 插入位置为新节点
+    node = std::dynamic_pointer_cast<TrieNode>(
+        std::make_shared<TrieNodeWithValue<T>>(std::make_shared<T>(std::move(value))));
+  }
+
+  ptr->children_[key.back()] = node;
+  
   return Trie(new_root);
 }
 
