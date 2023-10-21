@@ -12,9 +12,9 @@ auto TrieStore::Get(std::string_view key) -> std::optional<ValueGuard<T>> {
   // (3) If the value is found, return a ValueGuard object that holds a reference to the value and the
   //     root. Otherwise, return std::nullopt.
   // throw NotImplementedException("TrieStore::Get is not implemented.");
-  root_lock_.lock();
-  auto trie = root_;
-  root_lock_.unlock();
+  this->root_lock_.lock();
+  auto trie = this->root_;
+  this->root_lock_.unlock();
 
   if (auto val_ptr = trie.Get<T>(key); val_ptr != nullptr) {
     return std::make_optional<ValueGuard<T>>(trie, *val_ptr);
@@ -28,19 +28,18 @@ void TrieStore::Put(std::string_view key, T value) {
   // The logic should be somehow similar to `TrieStore::Get`.
   // throw NotImplementedException("TrieStore::Put is not implemented.");
   // 先获取write_lock_, 再获取root_lock_, 防止并发插入时, 后来的线程获得旧的Trie
-  write_lock_.lock();
+  std::lock_guard<std::mutex> lk(this->write_lock_);
+
   // 获取到trie后立刻释放root_lock_, 让读取线程可以读旧的trie
-  root_lock_.lock();
+  this->root_lock_.lock();
   auto trie = root_;
-  root_lock_.unlock();
+  this->root_lock_.unlock();
 
   auto new_trie = trie.Put(key, std::move(value));
 
-  root_lock_.lock();
-  root_ = new_trie;
-  root_lock_.unlock();
-
-  write_lock_.unlock();
+  this->root_lock_.lock();
+  this->root_ = new_trie;
+  this->root_lock_.unlock();
 }
 
 void TrieStore::Remove(std::string_view key) {
@@ -48,19 +47,18 @@ void TrieStore::Remove(std::string_view key) {
   // The logic should be somehow similar to `TrieStore::Get`.
   // throw NotImplementedException("TrieStore::Remove is not implemented.");
   // 先获取write_lock_, 再获取root_lock_, 防止并发删除时, 后来的线程获得旧的Trie
-  write_lock_.lock();
+  std::lock_guard<std::mutex> lk(this->write_lock_);
+
   // 获取到trie后立刻释放root_lock_, 让读取线程可以读旧的trie
-  root_lock_.lock();
-  auto trie = root_;
-  root_lock_.unlock();
+  this->root_lock_.lock();
+  auto trie = this->root_;
+  this->root_lock_.unlock();
 
   auto new_trie = trie.Remove(key);
 
-  root_lock_.lock();
-  root_ = new_trie;
-  root_lock_.unlock();
-
-  write_lock_.unlock();
+  this->root_lock_.lock();
+  this->root_ = new_trie;
+  this->root_lock_.unlock();
 }
 
 // Below are explicit instantiation of template functions.

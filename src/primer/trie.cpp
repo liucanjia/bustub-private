@@ -16,11 +16,11 @@ auto Trie::Get(std::string_view key) const -> const T * {
   // nullptr. After you find the node, you should use `dynamic_cast` to cast it to `const TrieNodeWithValue<T> *`. If
   // dynamic_cast returns `nullptr`, it means the type of the value is mismatched, and you should return nullptr.
   // Otherwise, return the value.
-  if (root_ == nullptr) {
+  if (this->root_ == nullptr) {
     return nullptr;
   }
 
-  auto tmp_node = root_;
+  auto tmp_node = this->root_;
   for (auto ch : key) {
     if (tmp_node->children_.find(ch) != tmp_node->children_.end()) {
       // 按照key依次遍历Trie
@@ -49,10 +49,10 @@ auto Trie::Put(std::string_view key, T value) const -> Trie {
   std::shared_ptr<TrieNode> new_root;
   if (key.empty()) {
     // key为空
-    if (root_ != nullptr) {
+    if (this->root_ != nullptr) {
       // 已有根节点, 复制并插入值
       new_root = std::dynamic_pointer_cast<TrieNode>(
-          std::make_shared<TrieNodeWithValue<T>>(root_->children_, std::make_shared<T>(std::move(value))));
+          std::make_shared<TrieNodeWithValue<T>>(this->root_->children_, std::make_shared<T>(std::move(value))));
     } else {
       // 原本为空树, 新建节点
       new_root = std::dynamic_pointer_cast<TrieNode>(
@@ -61,9 +61,9 @@ auto Trie::Put(std::string_view key, T value) const -> Trie {
     return Trie(new_root);
   }
 
-  if (root_ != nullptr) {
+  if (this->root_ != nullptr) {
     // 已有根节点
-    new_root = std::shared_ptr<TrieNode>(root_->Clone());
+    new_root = std::shared_ptr<TrieNode>(this->root_->Clone());
   } else {
     // 原本为空树
     new_root = std::make_unique<TrieNode>();
@@ -106,10 +106,10 @@ auto Trie::Remove(std::string_view key) const -> Trie {
 
   // You should walk through the trie and remove nodes if necessary. If the node doesn't contain a value any more,
   // you should convert it to `TrieNode`. If a node doesn't have children any more, you should remove it.
-  if (root_ == nullptr) {
-    return Trie(root_);
+  if (this->root_ == nullptr) {
+    return Trie(this->root_);
   }
-  return Trie(Dfs(key, 0, root_));
+  return Trie(Dfs(key, 0, this->root_));
 }
 
 auto Trie::Dfs(std::string_view key, size_t idx, const std::shared_ptr<const TrieNode> &ptr) const
@@ -130,13 +130,13 @@ auto Trie::Dfs(std::string_view key, size_t idx, const std::shared_ptr<const Tri
   auto it = ptr->children_.find(key[idx]);
   if (it == ptr->children_.end()) {
     // 查询不到key的字符对应的节点, 则查找失败, 直接返回root_
-    return root_;
+    return this->root_;
   }
 
   auto child_node = Dfs(key, idx + 1, it->second);
   // 返回为root_, 代表查找失败, 直接返回
-  if (child_node == root_) {
-    return root_;
+  if (child_node == this->root_) {
+    return this->root_;
   }
 
   if (ptr->is_value_node_ || ptr->children_.size() > 1 || child_node != nullptr) {
