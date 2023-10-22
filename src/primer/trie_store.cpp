@@ -1,4 +1,5 @@
 #include "primer/trie_store.h"
+#include <mutex>
 #include <optional>
 
 namespace bustub {
@@ -12,9 +13,9 @@ auto TrieStore::Get(std::string_view key) -> std::optional<ValueGuard<T>> {
   // (3) If the value is found, return a ValueGuard object that holds a reference to the value and the
   //     root. Otherwise, return std::nullopt.
   // throw NotImplementedException("TrieStore::Get is not implemented.");
-  this->root_lock_.lock();
+  std::unique_lock<std::mutex> lk(this->root_lock_);
   auto trie = this->root_;
-  this->root_lock_.unlock();
+  lk.unlock();
 
   if (auto val_ptr = trie.Get<T>(key); val_ptr != nullptr) {
     return std::make_optional<ValueGuard<T>>(trie, *val_ptr);
@@ -31,15 +32,15 @@ void TrieStore::Put(std::string_view key, T value) {
   std::lock_guard<std::mutex> lk(this->write_lock_);
 
   // 获取到trie后立刻释放root_lock_, 让读取线程可以读旧的trie
-  this->root_lock_.lock();
+  std::unique_lock<std::mutex> ul(this->root_lock_);
   auto trie = root_;
-  this->root_lock_.unlock();
+  ul.unlock();
 
   auto new_trie = trie.Put(key, std::move(value));
 
-  this->root_lock_.lock();
+  ul.lock();
   this->root_ = new_trie;
-  this->root_lock_.unlock();
+  ul.unlock();
 }
 
 void TrieStore::Remove(std::string_view key) {
@@ -50,15 +51,15 @@ void TrieStore::Remove(std::string_view key) {
   std::lock_guard<std::mutex> lk(this->write_lock_);
 
   // 获取到trie后立刻释放root_lock_, 让读取线程可以读旧的trie
-  this->root_lock_.lock();
+  std::unique_lock<std::mutex> ul(this->root_lock_);
   auto trie = this->root_;
-  this->root_lock_.unlock();
+  ul.unlock();
 
   auto new_trie = trie.Remove(key);
 
-  this->root_lock_.lock();
+  ul.lock();
   this->root_ = new_trie;
-  this->root_lock_.unlock();
+  ul.unlock();
 }
 
 // Below are explicit instantiation of template functions.
