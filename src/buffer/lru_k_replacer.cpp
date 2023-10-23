@@ -16,6 +16,7 @@
 #include <mutex>
 #include <sstream>
 #include <utility>
+#include "common/config.h"
 #include "common/exception.h"
 
 namespace bustub {
@@ -42,7 +43,7 @@ auto LRUKNode::GetEarlyTimeStamp() -> size_t { return this->history_.back(); }
 LRUKReplacer::LRUKReplacer(size_t num_frames, size_t k) : replacer_size_(num_frames), k_(k) {}
 
 auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
-  frame_id_t evict_frame_id = -1;
+  frame_id_t evict_frame_id = INVALID_FRAME_ID;
   size_t evict_distance = 0;
   size_t evict_early_timestamp = SIZE_MAX;
 
@@ -66,7 +67,7 @@ auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
     }
   }
 
-  if (evict_frame_id != -1) {
+  if (evict_frame_id != INVALID_FRAME_ID) {
     *frame_id = evict_frame_id;
     this->Remove(evict_frame_id);
     return true;

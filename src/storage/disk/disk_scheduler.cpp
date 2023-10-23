@@ -19,8 +19,6 @@
 namespace bustub {
 
 DiskScheduler::DiskScheduler(DiskManager *disk_manager) : disk_manager_(disk_manager) {
-  // TODO(P1): remove this line after you have implemented the disk scheduler API
-
   // Spawn the background thread
   background_thread_.emplace([&] { StartWorkerThread(); });
 }

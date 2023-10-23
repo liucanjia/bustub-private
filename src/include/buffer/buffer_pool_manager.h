@@ -208,5 +208,15 @@ class BufferPoolManager {
   }
 
   // TODO(student): You may add additional private members and helper functions
+  /**
+   * @brief Pin the target page from the buffer pool. If page_id is not in the buffer pool, return false.
+   *
+   * Increment the pin count of a page. If the pin count is 0, the frame should disable eviction by the replacer.
+   *
+   * @param page_id id of page to be pinned
+   * @param access_type type of access to the page, only needed for leaderboard tests.
+   * @return false if the page is not in the page table, true otherwise
+   */
+  auto PinPage(page_id_t page_id, AccessType access_type = AccessType::Unknown) -> bool;
 };
 }  // namespace bustub
