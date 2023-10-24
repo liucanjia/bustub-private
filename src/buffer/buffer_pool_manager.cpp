@@ -12,7 +12,6 @@
 
 #include "buffer/buffer_pool_manager.h"
 #include <memory>
-#include <mutex>
 #include <sstream>
 #include <utility>
 

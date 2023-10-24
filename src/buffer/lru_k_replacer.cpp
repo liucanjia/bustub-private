@@ -13,7 +13,6 @@
 #include "buffer/lru_k_replacer.h"
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
 #include <sstream>
 #include <utility>
 #include "common/config.h"
