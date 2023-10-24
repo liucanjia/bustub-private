@@ -218,5 +218,11 @@ class BufferPoolManager {
    * @return false if the page is not in the page table, true otherwise
    */
   auto PinPage(page_id_t page_id, AccessType access_type = AccessType::Unknown) -> bool;
+
+  /** Reset the Page object. */
+  void ResetPage(frame_id_t frame_id);
+
+  /** read the disk page to buffer pool or write the buffer pool page to disk. */
+  void RWDisk(page_id_t page_id, frame_id_t frame_id, bool is_write_);
 };
 }  // namespace bustub

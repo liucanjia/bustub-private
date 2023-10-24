@@ -20,6 +20,8 @@
 #include "common/exception.h"
 
 namespace bustub {
+static constexpr int INVALID_FRAME_ID = -1;  // invalid frame id
+
 void LRUKNode::Insert(size_t new_timestamp) {
   if (this->history_.size() == this->k_) {
     this->history_.pop_back();
@@ -47,29 +49,28 @@ auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
   size_t evict_distance = 0;
   size_t evict_early_timestamp = SIZE_MAX;
 
-  {
-    std::lock_guard<std::mutex> lk(this->latch_);
+  std::lock_guard<std::mutex> lk(this->latch_);
 
-    for (auto &&it : this->node_store_) {
-      if (!it.second.GetEvictable()) {
-        continue;
-      }
+  for (auto &&it : this->node_store_) {
+    if (!it.second.GetEvictable()) {
+      continue;
+    }
 
-      auto frame_id = it.first;
-      auto distance = it.second.GetKDistance(this->current_timestamp_);
-      auto early_timestamp = it.second.GetEarlyTimeStamp();
+    auto frame_id = it.first;
+    auto distance = it.second.GetKDistance(this->current_timestamp_);
+    auto early_timestamp = it.second.GetEarlyTimeStamp();
 
-      if (distance > evict_distance || (distance == evict_distance && early_timestamp < evict_early_timestamp)) {
-        evict_frame_id = frame_id;
-        evict_distance = distance;
-        evict_early_timestamp = early_timestamp;
-      }
+    if (distance > evict_distance || (distance == evict_distance && early_timestamp < evict_early_timestamp)) {
+      evict_frame_id = frame_id;
+      evict_distance = distance;
+      evict_early_timestamp = early_timestamp;
     }
   }
 
   if (evict_frame_id != INVALID_FRAME_ID) {
     *frame_id = evict_frame_id;
-    this->Remove(evict_frame_id);
+    this->node_store_.erase(evict_frame_id);
+    this->curr_size_--;
     return true;
   }
 
@@ -138,8 +139,8 @@ void LRUKReplacer::Remove(frame_id_t frame_id) {
     this->node_store_.erase(frame_id);
     this->curr_size_--;
   } else {
-    ss << "At LRUKReplacer::Remove, frame id:" << frame_id << " is not exist.";
-    throw Exception(ss.str());
+    /** If specified frame is not found, directly return from this function. */
+    return;
   }
 }
 
