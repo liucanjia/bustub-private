@@ -12,13 +12,16 @@
 
 #pragma once
 
-#include <cstddef>
+#include <limits>
 #include <list>
 #include <mutex>  // NOLINT
+#include <sstream>
+#include <string_view>
 #include <unordered_map>
-#include <utility>
+#include <vector>
 
 #include "common/config.h"
+#include "common/exception.h"
 #include "common/macros.h"
 
 namespace bustub {
@@ -36,9 +39,9 @@ class LRUKNode {
   bool is_evictable_{false};
 
  public:
-  explicit LRUKNode(size_t k, size_t current_timestamp) : k_(k) { this->history_.push_back(current_timestamp); }
+  explicit LRUKNode(size_t k, size_t current_timestamp) : k_{k} { this->history_.emplace_front(current_timestamp); }
   LRUKNode(LRUKNode &&that) noexcept
-      : history_(std::move(that.history_)), k_(that.k_), is_evictable_(that.is_evictable_) {}
+      : history_{std::move(that.history_)}, k_{that.k_}, is_evictable_{that.is_evictable_} {}
   void Insert(size_t new_timestamp);
   void SetEvictable(bool set_evictable);
   auto GetEvictable() -> bool;
@@ -157,11 +160,20 @@ class LRUKReplacer {
    */
   auto Size() -> size_t;
 
+  inline void CheckFrameId(frame_id_t frame_id, std::string_view funcName) {
+    if (static_cast<size_t>(frame_id) >= this->replacer_size_) {
+      // frame_id非法, 直接抛出错误
+      throw Exception(
+          (std::stringstream{} << "At LRUKReplacer::" << funcName << ", frame_id: " << frame_id << " is invalid.")
+              .str());
+    }
+  }
+
  private:
   // TODO(student): implement me! You can replace these member variables as you like.
   // Remove maybe_unused if you start using them.
   std::unordered_map<frame_id_t, LRUKNode> node_store_;
-  size_t current_timestamp_{0};
+  size_t current_timestamp_{0};  // 逻辑时间戳, 每次访问页面时, 时间戳+1
   size_t curr_size_{0};
   size_t replacer_size_;
   size_t k_;

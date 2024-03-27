@@ -32,7 +32,7 @@ void TrieStore::Put(std::string_view key, T value) {
 
   // 获取到trie后立刻释放root_lock_, 让读取线程可以读旧的trie
   std::unique_lock<std::mutex> ul(this->root_lock_);
-  auto trie = root_;
+  auto trie = this->root_;
   ul.unlock();
 
   auto new_trie = trie.Put(key, std::move(value));

@@ -11,8 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "storage/disk/disk_scheduler.h"
-#include <optional>
-#include "common/channel.h"
 #include "common/exception.h"
 #include "storage/disk/disk_manager.h"
 

@@ -11,14 +11,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "buffer/buffer_pool_manager.h"
-#include <memory>
-#include <sstream>
-#include <utility>
 
-#include "common/config.h"
 #include "common/exception.h"
 #include "common/macros.h"
-#include "storage/page/page.h"
 #include "storage/page/page_guard.h"
 
 namespace bustub {
@@ -43,33 +38,16 @@ auto BufferPoolManager::NewPage(page_id_t *page_id) -> Page * {
   std::unique_lock<std::mutex> lk(this->latch_);
   frame_id_t frame_id = INVALID_FRAME_ID;
 
-  if (!this->free_list_.empty()) {
-    // buffer pool isn't full, get a free frame
-    frame_id = this->free_list_.back();
-    this->free_list_.pop_back();
-  } else {
-    // buffer poll is full, try to evict a old page
-    if (auto evict_able = this->replacer_->Evict(&frame_id); evict_able) {
-      // find one page can be evict
-      auto &page = this->pages_[frame_id];
-      this->page_table_.erase(page.GetPageId());
-      // if page is dirty, write back to disk and reset the page object
-      if (page.IsDirty()) {
-        this->RWDisk(page.GetPageId(), frame_id, true);
-        this->ResetPage(frame_id);
-      }
-    } else {
-      // all page are not evictable, return nullptr
-      return nullptr;
-    }
+  if (!this->TryEvict(&frame_id)) {
+    // all page are not evictable, return nullptr
+    return nullptr;
   }
-  // get a new page id and pin the page
+  // create a new page on the disk and pin the page(because new page is clean, don't need to read page from disk to
+  // buffer_pool)
   *page_id = this->AllocatePage();
   this->page_table_[*page_id] = frame_id;
   if (!this->PinPage(*page_id)) {
-    std::stringstream ss;
-    ss << "Try to pin page " << *page_id << " fail.";
-    throw ExecutionException(ss.str());
+    throw ExecutionException((std::stringstream{} << "Try to pin page " << *page_id << " fail.").str());
   }
 
   return &this->pages_[frame_id];
@@ -86,41 +64,24 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
   }
 
   // if page in the disk, try to read it from disk
-  if (!this->free_list_.empty()) {
-    // buffer pool isn't full, get a free frame
-    frame_id = this->free_list_.back();
-    this->free_list_.pop_back();
-  } else {
-    // buffer poll is full, try to evict a old page
-    if (auto evict_able = this->replacer_->Evict(&frame_id); evict_able) {
-      // find one page can be evict
-      auto &page = this->pages_[frame_id];
-      this->page_table_.erase(page.GetPageId());
-      // if page is dirty, write back to disk and reset the page object
-      if (page.IsDirty()) {
-        this->RWDisk(page.GetPageId(), frame_id, true);
-        this->ResetPage(frame_id);
-      }
-    } else {
-      // all page are not evictable, return nullptr
-      return nullptr;
-    }
+  if (!this->TryEvict(&frame_id)) {
+    // all page are not evictable, return nullptr
+    return nullptr;
   }
-
+  // pin the page
   this->page_table_[page_id] = frame_id;
-  this->RWDisk(page_id, frame_id, false);
+  auto &page = this->pages_[frame_id];
   if (!this->PinPage(page_id)) {
-    std::stringstream ss;
-    ss << "Try to pin page " << page_id << " fail.";
-    throw ExecutionException(ss.str());
+    throw ExecutionException((std::stringstream{} << "Try to pin page " << page_id << " fail.").str());
   }
-
-  return &this->pages_[frame_id];
+  // read the page data from disk to buffer_pool
+  this->RWDisk(page, false);
+  return &page;
 }
 
 auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty, [[maybe_unused]] AccessType access_type) -> bool {
   std::unique_lock<std::mutex> lk(this->latch_);
-  // if find the page in buffer pool, try to decrease the pin count and set dirty flag
+  // if find the page in buffer pool, try to decrease the pin_count and set dirty flag
   if (auto it = this->page_table_.find(page_id); it != this->page_table_.end()) {
     auto frame_id = it->second;
     auto &page = this->pages_[frame_id];
@@ -141,7 +102,7 @@ auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty, [[maybe_unus
       return true;
     }
   }
-  // If page_id is not in the buffer pool or its pin count is already return false.
+  // If page_id is not in the buffer pool or its pin count is already 0, return false.
   return false;
 }
 
@@ -150,7 +111,7 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
   if (auto it = this->page_table_.find(page_id); it != this->page_table_.end()) {
     auto frame_id = it->second;
     auto &page = this->pages_[frame_id];
-    this->RWDisk(page_id, frame_id, true);
+    this->RWDisk(page, true);
 
     page.is_dirty_ = false;
     return true;
@@ -161,11 +122,9 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
 
 void BufferPoolManager::FlushAllPages() {
   std::unique_lock<std::mutex> lk(this->latch_);
-  for (auto &it : this->page_table_) {
-    auto page_id = it.first;
-    auto frame_id = it.second;
+  for (auto &[page_id, frame_id] : this->page_table_) {
     auto &page = this->pages_[frame_id];
-    this->RWDisk(page_id, frame_id, true);
+    this->RWDisk(page, true);
 
     page.is_dirty_ = false;
   }
@@ -183,7 +142,7 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
     this->page_table_.erase(page_id);
     this->replacer_->Remove(frame_id);
     this->free_list_.push_front(frame_id);
-    this->ResetPage(frame_id);
+    this->ResetPage(page);
     this->DeallocatePage(page_id);
   }
   return true;
@@ -204,14 +163,14 @@ auto BufferPoolManager::PinPage(page_id_t page_id, [[maybe_unused]] AccessType a
     // page is exist, increase the pin count of the page
     auto frame_id = it->second;
     auto &page = this->pages_[frame_id];
+    // update the frame timestamp
+    this->replacer_->RecordAccess(frame_id);
     if (page.GetPinCount() == 0) {
       // if it's first time to pin the page, disable the eviction of the page
       page.page_id_ = page_id;
-      this->replacer_->RecordAccess(frame_id);
       this->replacer_->SetEvictable(frame_id, false);
-    } else {
-      this->replacer_->RecordAccess(frame_id);
     }
+    // update the pin_count
     page.pin_count_++;
 
     return true;
@@ -220,19 +179,39 @@ auto BufferPoolManager::PinPage(page_id_t page_id, [[maybe_unused]] AccessType a
   return false;
 }
 
-void BufferPoolManager::ResetPage(frame_id_t frame_id) {
-  auto &page = this->pages_[frame_id];
+auto BufferPoolManager::TryEvict(frame_id_t *frame_id) -> bool {
+  if (!this->free_list_.empty()) {
+    // buffer pool isn't full, get a free frame
+    *frame_id = this->free_list_.back();
+    this->free_list_.pop_back();
+  } else if (auto evict_able = this->replacer_->Evict(frame_id); evict_able) {
+    // buffer pool is full, try to evict a old page
+    auto &page = this->pages_[*frame_id];
+    this->page_table_.erase(page.GetPageId());
+    // if page is dirty, write back to disk and reset the page object
+    if (page.IsDirty()) {
+      this->RWDisk(page, true);
+      this->ResetPage(page);
+    }
+  } else {
+    // all page are not evictable, return false
+    return false;
+  }
+
+  return true;
+}
+
+void BufferPoolManager::ResetPage(Page &page) {
   page.page_id_ = INVALID_PAGE_ID;
   page.pin_count_ = 0;
   page.is_dirty_ = false;
   page.ResetMemory();
 }
 
-void BufferPoolManager::RWDisk(page_id_t page_id, frame_id_t frame_id, bool is_write_) {
-  auto &page = this->pages_[frame_id];
+void BufferPoolManager::RWDisk(Page &page, bool is_write_) {
   auto promise = this->disk_scheduler_->CreatePromise();
   auto future = promise.get_future();
-  this->disk_scheduler_->Schedule({is_write_, page.GetData(), page_id, std::move(promise)});
+  this->disk_scheduler_->Schedule({is_write_, page.GetData(), page.GetPageId(), std::move(promise)});
   future.get();
 }
 }  // namespace bustub

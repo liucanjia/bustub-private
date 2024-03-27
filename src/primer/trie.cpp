@@ -1,10 +1,5 @@
 #include "primer/trie.h"
-#include <cstddef>
-#include <cstdio>
-#include <map>
-#include <memory>
 #include <string_view>
-#include <utility>
 
 namespace bustub {
 
@@ -31,12 +26,17 @@ auto Trie::Get(std::string_view key) const -> const T * {
     }
   }
 
-  auto result_node = dynamic_cast<const TrieNodeWithValue<T> *>(tmp_node.get());
-  if (result_node == nullptr) {
-    // 节点没有存储value, 返回nullptr
+  // 节点没有存储value, 返回nullptr
+  if (!tmp_node->is_value_node_) {
     return nullptr;
-  }  // 返回value的指针
-  return result_node->value_.get();
+  }
+  // 尝试将trieNode转为TrieNodeWithValue<T>
+  auto result_node = std::dynamic_pointer_cast<const TrieNodeWithValue<T>>(tmp_node);
+  if (result_node != nullptr) {
+    // 类型T不符合
+    return result_node->value_.get();
+  }
+  return nullptr;
 }
 
 template <class T>
@@ -63,10 +63,10 @@ auto Trie::Put(std::string_view key, T value) const -> Trie {
 
   if (this->root_ != nullptr) {
     // 已有根节点
-    new_root = std::shared_ptr<TrieNode>(this->root_->Clone());
+    new_root = this->root_->Clone();
   } else {
     // 原本为空树
-    new_root = std::make_unique<TrieNode>();
+    new_root = std::make_shared<TrieNode>();
   }
 
   auto ptr = new_root;
@@ -76,12 +76,12 @@ auto Trie::Put(std::string_view key, T value) const -> Trie {
     auto ch = key[idx];
     // 中间节点
     if (auto it = ptr->children_.find(ch); it != ptr->children_.end()) {
-      node = std::shared_ptr<TrieNode>(it->second->Clone());
+      node = it->second->Clone();
     } else {
-      node = std::make_unique<TrieNode>();
+      node = std::make_shared<TrieNode>();
     }
 
-    ptr->children_[ch] = node;
+    ptr->children_.insert_or_assign(ch, node);
     ptr = node;
   }
 
@@ -96,7 +96,7 @@ auto Trie::Put(std::string_view key, T value) const -> Trie {
         std::make_shared<TrieNodeWithValue<T>>(std::make_shared<T>(std::move(value))));
   }
 
-  ptr->children_[key.back()] = node;
+  ptr->children_.insert_or_assign(key.back(), node);
 
   return Trie(new_root);
 }
@@ -107,14 +107,14 @@ auto Trie::Remove(std::string_view key) const -> Trie {
   // You should walk through the trie and remove nodes if necessary. If the node doesn't contain a value any more,
   // you should convert it to `TrieNode`. If a node doesn't have children any more, you should remove it.
   if (this->root_ == nullptr) {
-    return Trie(this->root_);
+    return {};
   }
   return Trie(Dfs(key, 0, this->root_));
 }
 
 auto Trie::Dfs(std::string_view key, size_t idx, const std::shared_ptr<const TrieNode> &ptr) const
     -> std::shared_ptr<const TrieNode> {
-  std::shared_ptr<TrieNode> node;
+  std::shared_ptr<TrieNode> node = nullptr;
   if (idx == key.length()) {
     // 递归出口, 查找到最后一个节点
     if (!ptr->children_.empty()) {
@@ -144,7 +144,7 @@ auto Trie::Dfs(std::string_view key, size_t idx, const std::shared_ptr<const Tri
     node = ptr->Clone();
     if (child_node != nullptr) {
       // 若子树不为nullptr, 则将子树连接到新节点
-      node->children_[key[idx]] = child_node;
+      node->children_.insert_or_assign(key[idx], child_node);
     } else {
       // 子树为nullptr, 则从子节点中删除
       node->children_.erase(key[idx]);
