@@ -12,7 +12,7 @@ class BasicPageGuard {
  public:
   BasicPageGuard() = default;
 
-  BasicPageGuard(BufferPoolManager *bpm, Page *page) : bpm_(bpm), page_(page) { this->is_dropped_ = false; }
+  BasicPageGuard(BufferPoolManager *bpm, Page *page) : bpm_(bpm), page_(page) {}
 
   BasicPageGuard(const BasicPageGuard &) = delete;
   auto operator=(const BasicPageGuard &) -> BasicPageGuard & = delete;
@@ -102,6 +102,8 @@ class BasicPageGuard {
     return reinterpret_cast<T *>(GetDataMut());
   }
 
+  auto IsNull() -> bool { return page_ == nullptr; }
+
  private:
   friend class ReadPageGuard;
   friend class WritePageGuard;
@@ -109,7 +111,6 @@ class BasicPageGuard {
   BufferPoolManager *bpm_{nullptr};
   Page *page_{nullptr};
   bool is_dirty_{false};
-  bool is_dropped_{true};
 
   void ClearAll();
 };
@@ -170,6 +171,8 @@ class ReadPageGuard {
   auto As() -> const T * {
     return guard_.As<T>();
   }
+
+  auto IsNull() -> bool { return guard_.IsNull(); }
 
  private:
   // You may choose to get rid of this and add your own private variables.
@@ -239,6 +242,8 @@ class WritePageGuard {
   auto AsMut() -> T * {
     return guard_.AsMut<T>();
   }
+
+  auto IsNull() -> bool { return guard_.IsNull(); }
 
  private:
   // You may choose to get rid of this and add your own private variables.

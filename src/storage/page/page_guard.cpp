@@ -15,14 +15,13 @@ auto BasicPageGuard::operator=(BasicPageGuard &&that) noexcept -> BasicPageGuard
   this->bpm_ = that.bpm_;
   this->page_ = that.page_;
   this->is_dirty_ = that.is_dirty_;
-  this->is_dropped_ = that.is_dropped_;
 
   that.ClearAll();
   return *this;
 }
 
 auto BasicPageGuard::UpgradeRead() -> ReadPageGuard {
-  if (!this->is_dropped_) {
+  if (this->page_ != nullptr) {
     this->page_->RLatch();
   }
 
@@ -33,7 +32,7 @@ auto BasicPageGuard::UpgradeRead() -> ReadPageGuard {
 }
 
 auto BasicPageGuard::UpgradeWrite() -> WritePageGuard {
-  if (!this->is_dropped_) {
+  if (this->page_ != nullptr) {
     this->page_->WLatch();
   }
 
@@ -44,7 +43,7 @@ auto BasicPageGuard::UpgradeWrite() -> WritePageGuard {
 }
 
 BasicPageGuard::~BasicPageGuard() {
-  if (!this->is_dropped_) {
+  if (this->page_ != nullptr) {
     this->Drop();
   }
 }  // NOLINT
@@ -53,18 +52,21 @@ void BasicPageGuard::ClearAll() {
   this->bpm_ = nullptr;
   this->page_ = nullptr;
   this->is_dirty_ = false;
-  this->is_dropped_ = true;
 }
 
 ReadPageGuard::ReadPageGuard(ReadPageGuard &&that) noexcept { this->guard_ = std::move(that.guard_); }
 
 auto ReadPageGuard::operator=(ReadPageGuard &&that) noexcept -> ReadPageGuard & {
+  if (this->guard_.page_ != nullptr) {
+    this->guard_.page_->RUnlatch();
+    this->guard_.Drop();
+  }
   this->guard_ = std::move(that.guard_);
   return *this;
 }
 
 void ReadPageGuard::Drop() {
-  if (!this->guard_.is_dropped_) {
+  if (this->guard_.page_ != nullptr) {
     this->guard_.page_->RUnlatch();
     this->guard_.Drop();
   }
@@ -75,12 +77,16 @@ ReadPageGuard::~ReadPageGuard() { this->Drop(); }  // NOLINT
 WritePageGuard::WritePageGuard(WritePageGuard &&that) noexcept { this->guard_ = std::move(that.guard_); }
 
 auto WritePageGuard::operator=(WritePageGuard &&that) noexcept -> WritePageGuard & {
+  if (this->guard_.page_ != nullptr) {
+    this->guard_.page_->WUnlatch();
+    this->guard_.Drop();
+  }
   this->guard_ = std::move(that.guard_);
   return *this;
 }
 
 void WritePageGuard::Drop() {
-  if (!this->guard_.is_dropped_) {
+  if (this->guard_.page_ != nullptr) {
     this->guard_.page_->WUnlatch();
     this->guard_.Drop();
   }

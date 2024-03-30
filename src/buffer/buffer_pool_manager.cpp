@@ -40,6 +40,7 @@ auto BufferPoolManager::NewPage(page_id_t *page_id) -> Page * {
 
   if (!this->TryEvict(&frame_id)) {
     // all page are not evictable, return nullptr
+    *page_id = INVALID_PAGE_ID;
     return nullptr;
   }
   // create a new page on the disk and pin the page(because new page is clean, don't need to read page from disk to

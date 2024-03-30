@@ -16,10 +16,13 @@
 
 namespace bustub {
 
-void ExtendibleHTableHeaderPage::Init(uint32_t max_depth) { this->max_depth_ = max_depth; }
+void ExtendibleHTableHeaderPage::Init(uint32_t max_depth) {
+  this->max_depth_ = max_depth;
+  std::fill(std::begin(this->directory_page_ids_), std::end(this->directory_page_ids_), INVALID_PAGE_ID);
+}
 
 auto ExtendibleHTableHeaderPage::HashToDirectoryIndex(uint32_t hash) const -> uint32_t {
-  // C++中移位操作的值>=变量类型的位数时, 先对移位操作的值取余, 故当max_depth_ == 0时, 为hash >> 32, 会先被取余为 hash >> 0
+  // if max_depth == 0, hash >> 32 == hash >> 0
   if (this->max_depth_ == 0) {
     return 0;
   }
