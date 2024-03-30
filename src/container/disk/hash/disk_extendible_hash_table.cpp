@@ -180,12 +180,9 @@ auto DiskExtendibleHashTable<K, V, KC>::Insert(const K &key, const V &value, Tra
 
     // bucket entry may change, reget the bucket page
     bucket_idx = directory_page->HashToBucketIndex(hash);
-    if (page_id_t new_page_id = directory_page->GetBucketPageId(bucket_idx); new_page_id != bucket_page_id) {
-      bucket_page_id = new_page_id;
-      bucket_guard = this->bpm_->FetchPageWrite(bucket_page_id);
-      if (bucket_guard.IsNull()) {
-        return false;
-      }
+    if (page_id_t tmp_page_id = directory_page->GetBucketPageId(bucket_idx); tmp_page_id == split_bucket_page_id) {
+      bucket_page_id = split_bucket_page_id;
+      bucket_guard = std::move(split_bucket_guard);
       bucket_page = bucket_guard.AsMut<ExtendibleHTableBucketPage<K, V, KC>>();
     }
   }
@@ -295,39 +292,53 @@ auto DiskExtendibleHashTable<K, V, KC>::Remove(const K &key, Transaction *transa
     return false;
   }
 
-  // merge the bucket when bucket_page is empty
-  while (bucket_page->IsEmpty() && directory_page->GetLocalDepth(bucket_idx) > 0) {
+  // merge the bucket when bucket_page or split_bucket_page is empty
+  while (directory_page->GetLocalDepth(bucket_idx) > 0) {
     // get the split bucket entry local_depth
     uint32_t local_depth = directory_page->GetLocalDepth(bucket_idx);
     uint32_t tmp_idx = bucket_idx & directory_page->GetLocalDepthMask(bucket_idx);
     uint32_t split_idx = directory_page->GetSplitImageIndex(tmp_idx, local_depth);
-    page_id_t split_bucket_page_id = directory_page->GetBucketPageId(split_idx);
-    // if bucket and split bucket have the same depth, merge
-    if (directory_page->GetLocalDepth(split_idx) == local_depth) {
-      uint32_t idx = std::min(tmp_idx, split_idx);
-      uint32_t diff = std::max(tmp_idx, split_idx) - idx;
-      for (; idx < directory_page->Size(); idx += diff) {
-        this->UpdateDirectoryMapping(directory_page, idx, split_bucket_page_id, local_depth - 1);
-      }
-    } else {
+    uint32_t split_depth = directory_page->GetLocalDepth(split_idx);
+    if (local_depth != split_depth) {
       break;
     }
-    // delete bucket page and update bucket entry
-    bucket_guard.Drop();
-    this->bpm_->DeletePage(bucket_page_id);
 
-    bucket_idx = std::min(tmp_idx, split_idx);
-    bucket_page_id = directory_page->GetBucketPageId(bucket_idx);
-    bucket_guard = this->bpm_->FetchPageWrite(bucket_page_id);
-    if (bucket_guard.IsNull()) {
-      return true;  // merge abort
+    page_id_t split_bucket_page_id = directory_page->GetBucketPageId(split_idx);
+    WritePageGuard split_bucket_page_guard = this->bpm_->FetchPageWrite(split_bucket_page_id);
+    if (split_bucket_page_guard.IsNull()) {
+      break;  // if bucket and split bucket don't have the same depth, don't merge
     }
-    bucket_page = bucket_guard.AsMut<ExtendibleHTableBucketPage<K, V, KC>>();
-  }
 
-  // try to shrink directory
-  if (directory_page->CanShrink()) {
-    directory_page->DecrGlobalDepth();
+    auto split_bucket_page = split_bucket_page_guard.As<ExtendibleHTableBucketPage<K, V, KC>>();
+    if (!bucket_page->IsEmpty() && !split_bucket_page->IsEmpty()) {
+      break;  // if bucket and split bucket are not empty, don't merge
+    }
+
+    page_id_t merge_page_id = INVALID_PAGE_ID;
+    if (!bucket_page->IsEmpty()) {
+      merge_page_id = bucket_page_id;
+    } else {
+      merge_page_id = split_bucket_page_id;
+    }
+
+    // merge bucket and split bucket
+    uint32_t idx = bucket_idx = std::min(tmp_idx, split_idx);
+    uint32_t diff = std::max(tmp_idx, split_idx) - idx;
+    for (; idx < directory_page->Size(); idx += diff) {
+      this->UpdateDirectoryMapping(directory_page, idx, merge_page_id, local_depth - 1);
+    }
+
+    // update bucket entry
+    if (bucket_page_id != merge_page_id) {
+      bucket_page_id = split_bucket_page_id;
+      bucket_guard = std::move(split_bucket_page_guard);
+      bucket_page = bucket_guard.AsMut<ExtendibleHTableBucketPage<K, V, KC>>();
+    }
+
+    // try to shrink directory
+    if (directory_page->CanShrink()) {
+      directory_page->DecrGlobalDepth();
+    }
   }
 
   return true;

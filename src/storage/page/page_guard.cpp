@@ -6,12 +6,15 @@ namespace bustub {
 BasicPageGuard::BasicPageGuard(BasicPageGuard &&that) noexcept { *this = std::move(that); }
 
 void BasicPageGuard::Drop() {
-  page_id_t page_id = this->PageId();
-  this->bpm_->UnpinPage(page_id, this->is_dirty_);
-  this->ClearAll();
+  if (this->page_ != nullptr) {
+    page_id_t page_id = this->PageId();
+    this->bpm_->UnpinPage(page_id, this->is_dirty_);
+    this->ClearAll();
+  }
 }
 
 auto BasicPageGuard::operator=(BasicPageGuard &&that) noexcept -> BasicPageGuard & {
+  this->Drop();
   this->bpm_ = that.bpm_;
   this->page_ = that.page_;
   this->is_dirty_ = that.is_dirty_;
@@ -42,11 +45,7 @@ auto BasicPageGuard::UpgradeWrite() -> WritePageGuard {
   return write_page_guard;
 }
 
-BasicPageGuard::~BasicPageGuard() {
-  if (this->page_ != nullptr) {
-    this->Drop();
-  }
-}  // NOLINT
+BasicPageGuard::~BasicPageGuard() { this->Drop(); }  // NOLINT
 
 void BasicPageGuard::ClearAll() {
   this->bpm_ = nullptr;
@@ -54,12 +53,11 @@ void BasicPageGuard::ClearAll() {
   this->is_dirty_ = false;
 }
 
-ReadPageGuard::ReadPageGuard(ReadPageGuard &&that) noexcept { this->guard_ = std::move(that.guard_); }
+ReadPageGuard::ReadPageGuard(ReadPageGuard &&that) noexcept { *this = std::move(that); }
 
 auto ReadPageGuard::operator=(ReadPageGuard &&that) noexcept -> ReadPageGuard & {
   if (this->guard_.page_ != nullptr) {
     this->guard_.page_->RUnlatch();
-    this->guard_.Drop();
   }
   this->guard_ = std::move(that.guard_);
   return *this;
@@ -74,12 +72,11 @@ void ReadPageGuard::Drop() {
 
 ReadPageGuard::~ReadPageGuard() { this->Drop(); }  // NOLINT
 
-WritePageGuard::WritePageGuard(WritePageGuard &&that) noexcept { this->guard_ = std::move(that.guard_); }
+WritePageGuard::WritePageGuard(WritePageGuard &&that) noexcept { *this = std::move(that); }
 
 auto WritePageGuard::operator=(WritePageGuard &&that) noexcept -> WritePageGuard & {
   if (this->guard_.page_ != nullptr) {
     this->guard_.page_->WUnlatch();
-    this->guard_.Drop();
   }
   this->guard_ = std::move(that.guard_);
   return *this;

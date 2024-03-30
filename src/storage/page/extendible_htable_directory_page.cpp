@@ -79,8 +79,9 @@ void ExtendibleHTableDirectoryPage::DecrGlobalDepth() {
 }
 
 auto ExtendibleHTableDirectoryPage::CanShrink() -> bool {
-  return std::all_of(std::begin(this->local_depths_), std::end(this->local_depths_),
-                     [=](auto depth) { return depth < this->global_depth_; });
+  auto first = std::begin(this->local_depths_);
+  auto last = first + this->Size();
+  return std::all_of(first, last, [=](auto depth) { return depth < this->global_depth_; });
 }
 
 auto ExtendibleHTableDirectoryPage::Size() const -> uint32_t { return 1 << this->global_depth_; }
