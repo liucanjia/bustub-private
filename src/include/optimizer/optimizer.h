@@ -107,6 +107,10 @@ class Optimizer {
    */
   auto EstimatedCardinality(const std::string &table_name) -> std::optional<size_t>;
 
+  auto RewriteExpressionForHashJoin(const AbstractExpressionRef &expr,
+                                    std::vector<AbstractExpressionRef> &left_key_expressions,
+                                    std::vector<AbstractExpressionRef> &right_key_expressions) -> bool;
+
   /** Catalog will be used during the planning process. USERS SHOULD ENSURE IT OUTLIVES
    * OPTIMIZER, otherwise it's a dangling reference.
    */
