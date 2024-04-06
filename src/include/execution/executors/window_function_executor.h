@@ -21,6 +21,64 @@
 #include "storage/table/tuple.h"
 
 namespace bustub {
+struct OrderKey {
+  /** The order-by values */
+  std::vector<Value> group_bys_;
+
+  /**
+   * Compares two order keys for equality.
+   * @param other the other orderby key to be compared with
+   * @return `true` if both orderby keys have equivalent group-by expressions, `false` otherwise
+   */
+  auto operator==(const OrderKey &other) const -> bool {
+    for (uint32_t i = 0; i < other.group_bys_.size(); i++) {
+      if (group_bys_[i].CompareEquals(other.group_bys_[i]) != CmpBool::CmpTrue) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
+
+struct PartitionKey {
+  /** The partition-by values */
+  std::vector<Value> group_bys_;
+
+  /**
+   * Compares two partition keys for equality.
+   * @param other the other partition key to be compared with
+   * @return `true` if both partition keys have equivalent group-by expressions, `false` otherwise
+   */
+  auto operator==(const PartitionKey &other) const -> bool {
+    for (uint32_t i = 0; i < other.group_bys_.size(); i++) {
+      if (group_bys_[i].CompareEquals(other.group_bys_[i]) != CmpBool::CmpTrue) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
+
+}  // namespace bustub
+
+namespace std {
+/** Implements std::hash on AggregateKey */
+template <>
+struct hash<bustub::PartitionKey> {
+  auto operator()(const bustub::PartitionKey &agg_key) const -> std::size_t {
+    size_t curr_hash = 0;
+    for (const auto &key : agg_key.group_bys_) {
+      if (!key.IsNull()) {
+        curr_hash = bustub::HashUtil::CombineHashes(curr_hash, bustub::HashUtil::HashValue(&key));
+      }
+    }
+    return curr_hash;
+  }
+};
+
+}  // namespace std
+
+namespace bustub {
 
 /**
  * The WindowFunctionExecutor executor executes a window function for columns using window function.
@@ -90,5 +148,18 @@ class WindowFunctionExecutor : public AbstractExecutor {
 
   /** The child executor from which tuples are obtained */
   std::unique_ptr<AbstractExecutor> child_executor_;
+  std::unordered_map<PartitionKey, std::vector<size_t>> ht_;
+  std::vector<std::vector<Value>> result_;
+  size_t cnt_{0};
+
+  void Helper(size_t output_col_idx, const WindowFunctionPlanNode::WindowFunction &window_fun,
+              std::vector<Tuple> &tuples);
+
+  /** @return The tuple as an OrderKey */
+  auto MakeOrderKey(const Tuple &tuple, const std::vector<std::pair<OrderByType, AbstractExpressionRef>> &orderby)
+      -> OrderKey;
+
+  /** @return The tuple as an ParititionKey */
+  auto MakeParititionKey(const Tuple &tuple, const std::vector<AbstractExpressionRef> &partitionby) -> PartitionKey;
 };
 }  // namespace bustub
