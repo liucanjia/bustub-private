@@ -60,7 +60,7 @@ void WindowFunctionExecutor::Init() {
   for (size_t i = 0; i < cols_cnt; ++i) {
     auto col_expr = std::dynamic_pointer_cast<ColumnValueExpression>(this->plan_->columns_[i]);
     auto col_idx = col_expr->GetColIdx();
-    if (col_idx != 0xffffffff) {    // if col_idx == -1, mean placeholder
+    if (col_idx != 0xffffffff) {  // if col_idx == -1, mean placeholder
       for (size_t j = 0; j < origin_tuples.size(); ++j) {
         this->result_[i][j] = col_expr->Evaluate(&origin_tuples[j], schema);
       }
