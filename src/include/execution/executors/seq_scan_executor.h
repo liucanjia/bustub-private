@@ -52,5 +52,7 @@ class SeqScanExecutor : public AbstractExecutor {
   const SeqScanPlanNode *plan_;
   TableInfo *table_info_;
   std::unique_ptr<TableIterator> table_iter_{};
+
+  void UpdateTupleByTimetamp(Tuple &tuple, TupleMeta &tuple_meta, RID &rid);
 };
 }  // namespace bustub
