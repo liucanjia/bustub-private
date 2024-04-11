@@ -52,7 +52,7 @@ class UpdateExecutor : public AbstractExecutor {
    *
    * NOTE: UpdateExecutor::Next() does not use the `rid` out-parameter.
    */
-  auto Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool override;
+  auto Next(Tuple *tuple, RID *rid) -> bool override;
 
   /** @return The output schema for the update */
   auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); }

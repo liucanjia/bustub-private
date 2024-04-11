@@ -30,14 +30,19 @@ void InsertExecutor::Init() {
   this->table_indexs_ = catalog->GetTableIndexes(this->table_info_->name_);
 }
 
-auto InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
+auto InsertExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   Tuple insert_tuple;
   RID old_rid;
   int insertd_count = 0;
+  auto timestamp = this->exec_ctx_->GetTransaction()->GetTransactionId();
+  auto txn = this->exec_ctx_->GetTransaction();
 
   while (this->child_executor_->Next(&insert_tuple, &old_rid)) {
-    if (auto new_rid = this->table_info_->table_->InsertTuple({0, false}, insert_tuple); new_rid != std::nullopt) {
+    if (auto new_rid = this->table_info_->table_->InsertTuple({timestamp, false}, insert_tuple);
+        new_rid != std::nullopt) {
       ++insertd_count;
+      // update the transaction write set
+      txn->AppendWriteSet(this->table_info_->oid_, new_rid.value());
       // update the indexs
       for (auto index_info : this->table_indexs_) {
         auto key_schema = *index_info->index_->GetKeySchema();

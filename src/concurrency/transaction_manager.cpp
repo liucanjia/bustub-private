@@ -56,8 +56,7 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
   std::unique_lock<std::mutex> commit_lck(commit_mutex_);
 
   // TODO(fall2023): acquire commit ts!
-  timestamp_t last_commit_ts = this->last_commit_ts_.load();
-  txn->commit_ts_.store(++last_commit_ts);
+  timestamp_t last_commit_ts = this->last_commit_ts_.load() + 1;
 
   if (txn->state_ != TransactionState::RUNNING) {
     throw Exception("txn not in running state");
@@ -75,8 +74,19 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
 
   std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
 
+  for (auto &&[table_oid, rid_set] : txn->GetWriteSets()) {
+    const auto table_info = this->catalog_->GetTable(table_oid);
+    for (auto &&rid : rid_set) {
+      auto [meta, tuple] = table_info->table_->GetTuple(rid);
+      meta.ts_ = last_commit_ts;
+
+      table_info->table_->UpdateTupleInPlace(meta, tuple, rid, nullptr);
+    }
+  }
+
   // TODO(fall2023): set commit timestamp + update last committed timestamp here.
   txn->state_ = TransactionState::COMMITTED;
+  txn->commit_ts_.store(last_commit_ts);
   this->last_commit_ts_.store(txn->commit_ts_);
   running_txns_.UpdateCommitTs(txn->commit_ts_);
   running_txns_.RemoveTxn(txn->read_ts_);
@@ -96,6 +106,65 @@ void TransactionManager::Abort(Transaction *txn) {
   running_txns_.RemoveTxn(txn->read_ts_);
 }
 
-void TransactionManager::GarbageCollection() { UNIMPLEMENTED("not implemented"); }
+void TransactionManager::GarbageCollection() {
+  auto water_mark = this->GetWatermark();
+  //  undo logs are no longer accessible, set the ts_ = INVALID_TS
+  for (auto &&table_name : this->catalog_->GetTableNames()) {
+    auto table_info = this->catalog_->GetTable(table_name);
+
+    for (auto iter = table_info->table_->MakeIterator(); !iter.IsEnd(); ++iter) {
+      bool final_undo_log = false;
+      auto [meta, tuple] = iter.GetTuple();
+      if (meta.ts_ <= water_mark) {
+        final_undo_log = true;
+      }
+
+      if (auto opt_undo_link = this->GetUndoLink(tuple.GetRid()); opt_undo_link.has_value()) {
+        for (auto undo_link = opt_undo_link.value(); undo_link.IsValid();) {
+          if (auto opt_undo_log = this->GetUndoLogOptional(undo_link); opt_undo_log.has_value()) {
+            auto undo_log = opt_undo_log.value();
+            if (final_undo_log) {
+              undo_log.ts_ = INVALID_TS;
+              std::unique_lock<std::shared_mutex> lk_txn_map(this->txn_map_mutex_);
+              auto txn = this->txn_map_[undo_link.prev_txn_];
+              txn->ModifyUndoLog(undo_link.prev_log_idx_, undo_log);
+            } else if (undo_log.ts_ <= water_mark) {
+              final_undo_log = true;
+            }
+
+            undo_link = undo_log.prev_version_;
+          } else {
+            break;
+          }
+        }
+      }
+    }
+  }
+  // if all undo_logs are unaccessible, remove the transaction
+  std::vector<txn_id_t> remove_txn_set;
+  std::unique_lock<std::shared_mutex> lk_txn_map(this->txn_map_mutex_);
+  for (auto &&[txn_id, txn] : this->txn_map_) {
+    if (auto state = txn->GetTransactionState();
+        !(state == TransactionState::COMMITTED || state == TransactionState::ABORTED)) {
+      continue;
+    }
+    std::unique_lock<std::mutex> lk_txn(txn->latch_);
+
+    bool remove_flag = true;
+    for (const auto &undo_log : txn->undo_logs_) {
+      if (undo_log.ts_ != INVALID_TS) {
+        remove_flag = false;
+      }
+    }
+
+    if (remove_flag) {
+      remove_txn_set.emplace_back(txn_id);
+    }
+  }
+
+  for (const auto &txn_id : remove_txn_set) {
+    this->txn_map_.erase(txn_id);
+  }
+}
 
 }  // namespace bustub
