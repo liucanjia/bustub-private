@@ -38,6 +38,19 @@ auto InsertExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   auto txn = this->exec_ctx_->GetTransaction();
 
   while (this->child_executor_->Next(&insert_tuple, &old_rid)) {
+    // check if the tuple already exists in the index
+    for (auto index_info : this->table_indexs_) {
+      std::vector<RID> result;
+      auto key_schema = *index_info->index_->GetKeySchema();
+      auto key_attrs = index_info->index_->GetKeyAttrs();
+      index_info->index_->ScanKey(insert_tuple.KeyFromTuple(this->table_info_->schema_, key_schema, key_attrs), &result,
+                                  this->exec_ctx_->GetTransaction());
+      if (!result.empty()) {
+        txn->SetTainted();
+        throw ExecutionException("Insert tuple has already exist.\n");
+      }
+    }
+
     if (auto new_rid = this->table_info_->table_->InsertTuple({timestamp, false}, insert_tuple);
         new_rid != std::nullopt) {
       ++insertd_count;
@@ -47,8 +60,14 @@ auto InsertExecutor::Next(Tuple *tuple, RID *rid) -> bool {
       for (auto index_info : this->table_indexs_) {
         auto key_schema = *index_info->index_->GetKeySchema();
         auto key_attrs = index_info->index_->GetKeyAttrs();
-        index_info->index_->InsertEntry(insert_tuple.KeyFromTuple(this->table_info_->schema_, key_schema, key_attrs),
-                                        new_rid.value(), this->exec_ctx_->GetTransaction());
+        // create index
+        if (!index_info->index_->InsertEntry(
+                insert_tuple.KeyFromTuple(this->table_info_->schema_, key_schema, key_attrs), new_rid.value(),
+                this->exec_ctx_->GetTransaction())) {
+          // if index already exist, throw exception
+          txn->SetTainted();
+          throw ExecutionException("Insert tuple has already exist.\n");
+        }
       }
     }
   }

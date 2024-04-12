@@ -41,7 +41,8 @@ auto TransactionManager::Begin(IsolationLevel isolation_level) -> Transaction * 
   auto txn = std::make_unique<Transaction>(txn_id, isolation_level);
   auto *txn_ref = txn.get();
   txn_map_.insert(std::make_pair(txn_id, std::move(txn)));
-
+  l.unlock();
+  
   // TODO(fall2023): set the timestamps here. Watermark updated below.
   std::unique_lock<std::mutex> commit_lck(this->commit_mutex_);
   txn_ref->read_ts_ = this->last_commit_ts_.load();
