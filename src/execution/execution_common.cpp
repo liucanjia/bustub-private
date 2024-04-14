@@ -48,6 +48,107 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
   return std::make_optional(Tuple{vals, schema});
 }
 
+void GetTupleByTimetamp(Tuple &tuple, TupleMeta &tuple_meta, RID &rid, Schema &schema, TransactionManager *txn_mgr,
+                        Transaction *txn) {
+  // The tuple modified by another uncommitted transaction or The tuple newer than the transaction read timestamp
+  if ((tuple_meta.ts_ >= TXN_START_ID && tuple_meta.ts_ != txn->GetTransactionId()) ||
+      (tuple_meta.ts_ < TXN_START_ID && tuple_meta.ts_ > txn->GetReadTs())) {
+    std::vector<UndoLog> undo_logs;
+
+    bool final_log = false;
+    if (auto opt_version_link = txn_mgr->GetVersionLink(rid); opt_version_link.has_value()) {
+      auto version_link = opt_version_link.value();
+      for (auto undo_link = version_link.prev_; undo_link.IsValid() && !final_log;) {
+        if (auto opt_undo_log = txn_mgr->GetUndoLogOptional(undo_link); opt_undo_log.has_value()) {
+          auto undo_log = opt_undo_log.value();
+          undo_logs.emplace_back(undo_log);
+          undo_link = undo_log.prev_version_;
+          if (undo_log.ts_ <= txn->GetReadTs()) {
+            final_log = true;
+          }
+        }
+      }
+    }
+
+    if (final_log) {
+      auto opt_tuple = ReconstructTuple(&schema, tuple, tuple_meta, undo_logs);
+      if (opt_tuple.has_value()) {
+        tuple = opt_tuple.value();
+        tuple_meta.is_deleted_ = undo_logs.back().is_deleted_;
+        tuple_meta.ts_ = undo_logs.back().ts_;
+        return;
+      }
+    }
+    // The tuple was deleted or the Transaction read timestamp older than all tuple
+    tuple_meta.is_deleted_ = true;
+    tuple_meta.ts_ = 0;
+  }
+
+  // The tuple in the table heap is the most recent data or The tuple in the table heap contains modification by the
+  // current transaction
+}
+
+void PreCheck(std::string_view type, RID &rid, TupleMeta &meta, const TableInfo *table_info,
+              VersionUndoLink &version_link, Transaction *txn, TransactionManager *txn_mgr) {
+  std::stringstream ss;
+  ss << type << " W-W conflict.\n";
+
+  while (true) {
+    meta = table_info->table_->GetTupleMeta(rid);
+
+    // check W-W conflict
+    if ((meta.ts_ >= TXN_START_ID && meta.ts_ != txn->GetTransactionId()) ||
+        (meta.ts_ < TXN_START_ID && meta.ts_ > txn->GetReadTs())) {
+      // W-W conflict
+      txn->SetTainted();
+      throw ExecutionException(ss.str());
+    }
+
+    // check in_progress
+    while (true) {
+      auto opt_version_link = txn_mgr->GetVersionLink(rid);
+      if (opt_version_link.has_value()) {
+        version_link = opt_version_link.value();
+        if (version_link.in_progress_) {
+          // if tuple is modifying by other transaction, spin to wait
+          continue;
+        }
+      }
+      // if version_link is null or tuple isn't modifying, go to the next step
+      break;
+    }
+
+    // try to update version link, if update failed, try the setps again
+    version_link.in_progress_ = true;
+    if (!txn_mgr->UpdateVersionLink(rid, std::make_optional(version_link),
+                                    [](std::optional<VersionUndoLink> opt_version_link_) -> bool {
+                                      if (!opt_version_link_.has_value()) {
+                                        return true;
+                                      }
+
+                                      auto version_link = opt_version_link_.value();
+                                      return !version_link.in_progress_;
+                                    })) {
+      continue;
+    }
+
+    // check W-W conflict again
+    meta = table_info->table_->GetTupleMeta(rid);
+    if ((meta.ts_ >= TXN_START_ID && meta.ts_ != txn->GetTransactionId()) ||
+        (meta.ts_ < TXN_START_ID && meta.ts_ > txn->GetReadTs())) {
+      // set in_progress = false
+      version_link.in_progress_ = false;
+      txn_mgr->UpdateVersionLink(rid, std::make_optional(version_link), nullptr);
+      // W-W conflict
+      txn->SetTainted();
+      throw ExecutionException(ss.str());
+    }
+
+    // get the versionlink success
+    break;
+  }
+}
+
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
                TableHeap *table_heap) {
   // always use stderr for printing logs...

@@ -12,6 +12,7 @@
 #include <memory>
 
 #include "concurrency/transaction_manager.h"
+#include "execution/execution_common.h"
 #include "execution/executors/update_executor.h"
 
 namespace bustub {
@@ -50,15 +51,19 @@ auto UpdateExecutor::Next(Tuple *tuple, RID *rid) -> bool {
 
     auto new_tuple = Tuple{tuple_vals, &schema};
 
-    if (auto old_meta = this->table_info_->table_->GetTupleMeta(old_rid); old_meta.ts_ == txn->GetTransactionId()) {
+    TupleMeta old_meta;
+    VersionUndoLink version_link;
+    PreCheck("Update", old_rid, old_meta, this->table_info_, version_link, txn, txn_mgr);
+
+    if (old_meta.ts_ == txn->GetTransactionId()) {
       // self-modification
       if (!IsTupleContentEqual(old_tuple, new_tuple)) {
         // if has undo_log, update the undo_log
-        if (auto opt_undo_link = txn_mgr->GetUndoLink(old_rid); opt_undo_link.has_value()) {
-          auto [prev_txn, log_idx] = opt_undo_link.value();
-          BUSTUB_ASSERT(prev_txn == txn->GetTransactionId(), "if self-modification, prev_version must in itself.\n");
+        if (auto undo_link = version_link.prev_; undo_link.IsValid()) {
+          BUSTUB_ASSERT(undo_link.prev_txn_ == txn->GetTransactionId(),
+                        "if self-modification, prev_version must in itself.\n");
 
-          auto undo_log = txn->GetUndoLog(log_idx);
+          auto undo_log = txn->GetUndoLog(undo_link.prev_log_idx_);
 
           std::vector<Column> cols;
           for (size_t idx = 0; idx < schema.GetColumnCount(); ++idx) {
@@ -87,48 +92,52 @@ auto UpdateExecutor::Next(Tuple *tuple, RID *rid) -> bool {
 
           Schema new_modified_schema = Schema{cols};
           undo_log.tuple_ = Tuple{vals, &new_modified_schema};
-          txn->ModifyUndoLog(log_idx, undo_log);
+          txn->ModifyUndoLog(undo_link.prev_log_idx_, undo_log);
         }
+
         // update the tuple
         this->table_info_->table_->UpdateTupleInPlace({txn->GetTransactionId(), false}, new_tuple, old_rid);
       }
-    } else if (old_meta.ts_ >= TXN_START_ID || old_meta.ts_ > txn->GetReadTs()) {
-      // W-W conflict
-      txn->SetTainted();
-      throw ExecutionException("Update tuple failed, W-W conflict.\n");
     } else {
-      if (IsTupleContentEqual(old_tuple, new_tuple)) {
-        continue;
-      }
+      if (!IsTupleContentEqual(old_tuple, new_tuple)) {
+        // generate the undo log, and link them together
+        std::vector<bool> modified_filed(schema.GetColumnCount(), false);
+        std::vector<Value> vals;
+        std::vector<Column> modified_cols;
 
-      // generate the undo log, and link them together
-      std::vector<bool> modified_filed(schema.GetColumnCount(), false);
-      std::vector<Value> vals;
-      std::vector<Column> modified_cols;
-
-      for (size_t idx = 0; idx < schema.GetColumnCount(); ++idx) {
-        auto old_val = old_tuple.GetValue(&schema, idx);
-        auto new_val = new_tuple.GetValue(&schema, idx);
-        if (!old_val.CompareExactlyEquals(new_val)) {
-          modified_filed[idx] = true;
-          vals.emplace_back(std::move(old_val));
-          modified_cols.emplace_back(schema.GetColumn(idx));
+        for (size_t idx = 0; idx < schema.GetColumnCount(); ++idx) {
+          auto old_val = old_tuple.GetValue(&schema, idx);
+          auto new_val = new_tuple.GetValue(&schema, idx);
+          if (!old_val.CompareExactlyEquals(new_val)) {
+            modified_filed[idx] = true;
+            vals.emplace_back(std::move(old_val));
+            modified_cols.emplace_back(schema.GetColumn(idx));
+          }
         }
-      }
 
-      Schema modified_schema{modified_cols};
-      UndoLog undo_log{false, std::move(modified_filed), Tuple{vals, &modified_schema}, old_meta.ts_};
-      if (auto opt_undo_link = txn_mgr->GetUndoLink(old_rid); opt_undo_link.has_value()) {
-        undo_log.prev_version_ = opt_undo_link.value();
-      }
+        Schema modified_schema{modified_cols};
+        UndoLog undo_log{false, std::move(modified_filed), Tuple{vals, &modified_schema}, old_meta.ts_};
+        if (version_link.prev_.IsValid()) {
+          undo_log.prev_version_ = version_link.prev_;
+        }
 
-      txn_mgr->UpdateUndoLink(old_rid, std::make_optional(txn->AppendUndoLog(undo_log)), nullptr);
-      txn->AppendWriteSet(this->table_info_->oid_, old_rid);
-      this->table_info_->table_->UpdateTupleInPlace({txn->GetTransactionId(), false}, new_tuple, old_rid);
+        auto undo_link = txn->AppendUndoLog(undo_log);
+        version_link.prev_ = undo_link;
+        txn->AppendWriteSet(this->table_info_->oid_, old_rid);
+        this->table_info_->table_->UpdateTupleInPlace({txn->GetTransactionId(), false}, new_tuple, old_rid);
+      }
     }
+
+    version_link.in_progress_ = false;
+    txn_mgr->UpdateVersionLink(old_rid, std::make_optional(version_link), nullptr);
   }
 
   if (!this->update_finished_) {
+    if (old_tuples.empty()) {
+      // 存在无法从底下算子拿到tuple的情况, 这时要抛出错误(暂时不懂为什么地下Scan算子返回为空)
+      txn->SetTainted();
+      throw ExecutionException("");
+    }
     *tuple = Tuple{{ValueFactory::GetIntegerValue(old_tuples.size())}, &this->plan_->OutputSchema()};
     this->update_finished_ = true;
     return true;

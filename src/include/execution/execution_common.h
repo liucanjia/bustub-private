@@ -6,12 +6,21 @@
 #include "catalog/catalog.h"
 #include "catalog/schema.h"
 #include "concurrency/transaction.h"
+#include "concurrency/transaction_manager.h"
 #include "storage/table/tuple.h"
 
 namespace bustub {
 
 auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const TupleMeta &base_meta,
                       const std::vector<UndoLog> &undo_logs) -> std::optional<Tuple>;
+
+void GetTupleByTimetamp(Tuple &tuple, TupleMeta &tuple_meta, RID &rid, Schema &schema, TransactionManager *txn_mgr,
+                        Transaction *txn);
+// void GetTupleByTimetamp(Tuple &tuple, TupleMeta &tuple_meta, RID &rid, Schema &schema, TransactionManager *txn_mgr,
+//                         Transaction *txn, VersionUndoLink &version_link);
+
+void PreCheck(std::string_view type, RID &rid, TupleMeta &meta, const TableInfo *table_info,
+              VersionUndoLink &version_link, Transaction *txn, TransactionManager *txn_mgr);
 
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
                TableHeap *table_heap);

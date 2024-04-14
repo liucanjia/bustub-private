@@ -42,8 +42,8 @@ DiskExtendibleHashTable<K, V, KC>::DiskExtendibleHashTable(const std::string &na
       directory_max_depth_(directory_max_depth),
       bucket_max_size_(bucket_max_size) {
   this->index_name_ = name + "_idx";
-  auto header_guard = this->bpm_->NewPageGuarded(&this->header_page_id_).UpgradeWrite();
-  auto header_page = header_guard.template AsMut<ExtendibleHTableHeaderPage>();
+  WritePageGuard header_guard = this->bpm_->NewPageGuarded(&this->header_page_id_).UpgradeWrite();
+  auto header_page = header_guard.AsMut<ExtendibleHTableHeaderPage>();
   header_page->Init(header_max_depth);
 }
 
@@ -189,7 +189,6 @@ auto DiskExtendibleHashTable<K, V, KC>::Insert(const K &key, const V &value, Tra
 
   directory_guard.Drop();
   return bucket_page->Insert(key, value, this->cmp_);
-  ;
 }
 
 template <typename K, typename V, typename KC>

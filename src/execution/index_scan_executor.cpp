@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "execution/executors/index_scan_executor.h"
+#include "execution/execution_common.h"
 
 namespace bustub {
 IndexScanExecutor::IndexScanExecutor(ExecutorContext *exec_ctx, const IndexScanPlanNode *plan)
@@ -31,12 +32,17 @@ auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   if (!this->rids_.empty()) {
     auto table_oid = this->plan_->table_oid_;
     auto table_info = this->exec_ctx_->GetCatalog()->GetTable(table_oid);
+    auto schema = this->plan_->OutputSchema();
+    auto txn = this->exec_ctx_->GetTransaction();
+    auto txn_mgr = this->exec_ctx_->GetTransactionManager();
 
     *rid = this->rids_.back();
     this->rids_.pop_back();
 
-    std::tie(std::ignore, *tuple) = table_info->table_->GetTuple(*rid);
-    return true;
+    TupleMeta meta;
+    std::tie(meta, *tuple) = table_info->table_->GetTuple(*rid);
+    GetTupleByTimetamp(*tuple, meta, *rid, schema, txn_mgr, txn);
+    return !meta.is_deleted_;
   }
 
   return false;

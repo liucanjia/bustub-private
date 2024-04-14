@@ -13,6 +13,7 @@
 #include <memory>
 
 #include "concurrency/transaction_manager.h"
+#include "execution/execution_common.h"
 #include "execution/executors/delete_executor.h"
 #include "type/value_factory.h"
 
@@ -41,12 +42,15 @@ auto DeleteExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   }
 
   for (auto &&[delete_tuple, delete_rid] : delete_tuples) {
-    if (auto old_meta = this->table_info_->table_->GetTupleMeta(delete_rid); old_meta.ts_ == txn->GetTransactionId()) {
-      // self-modification
+    TupleMeta old_meta;
+    VersionUndoLink version_link;
+    PreCheck("Delete", delete_rid, old_meta, this->table_info_, version_link, txn, txn_mgr);
 
+    // self-modification
+    if (old_meta.ts_ == txn->GetTransactionId()) {
       // if has undo_log, update the undo_log
-      if (auto opt_undo_link = txn_mgr->GetUndoLink(delete_rid); opt_undo_link.has_value()) {
-        auto [prev_txn, log_idx] = opt_undo_link.value();
+      if (version_link.prev_.IsValid()) {
+        auto [prev_txn, log_idx] = version_link.prev_;
         BUSTUB_ASSERT(prev_txn == txn->GetTransactionId(), "if self-modification, prev_version must in itself.\n");
 
         auto undo_log = txn->GetUndoLog(log_idx);
@@ -72,24 +76,23 @@ auto DeleteExecutor::Next(Tuple *tuple, RID *rid) -> bool {
         undo_log.tuple_ = Tuple{vals, &schema};
         txn->ModifyUndoLog(log_idx, undo_log);
       }
-
-      // update the tuple
-      this->table_info_->table_->UpdateTupleMeta({txn->GetTransactionId(), true}, delete_rid);
-    } else if (old_meta.ts_ >= TXN_START_ID || old_meta.ts_ > txn->GetReadTs()) {
-      // W-W conflict
-      txn->SetTainted();
-      throw ExecutionException("Delete tuple failed, W-W conflict.\n");
     } else {
       // generate the undo log, and link them together
       UndoLog undo_log{false, std::vector<bool>(schema.GetColumnCount(), true), delete_tuple, old_meta.ts_};
-      if (auto opt_undo_link = txn_mgr->GetUndoLink(delete_rid); opt_undo_link.has_value()) {
-        undo_log.prev_version_ = opt_undo_link.value();
+      if (version_link.prev_.IsValid()) {
+        undo_log.prev_version_ = version_link.prev_;
       }
 
-      txn_mgr->UpdateUndoLink(delete_rid, std::make_optional(txn->AppendUndoLog(undo_log)), nullptr);
+      auto undo_link = txn->AppendUndoLog(undo_log);
+      version_link.prev_ = undo_link;
       txn->AppendWriteSet(this->table_info_->oid_, delete_rid);
-      this->table_info_->table_->UpdateTupleMeta({txn->GetTransactionId(), true}, delete_rid);
     }
+
+    // update the tuple meta
+    this->table_info_->table_->UpdateTupleMeta({txn->GetTransactionId(), true}, delete_rid);
+
+    version_link.in_progress_ = false;
+    txn_mgr->UpdateVersionLink(delete_rid, std::make_optional(version_link), nullptr);
   }
 
   if (!this->delete_finished_) {
