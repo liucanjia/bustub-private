@@ -42,57 +42,7 @@ auto DeleteExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   }
 
   for (auto &&[delete_tuple, delete_rid] : delete_tuples) {
-    TupleMeta old_meta;
-    VersionUndoLink version_link;
-    PreCheck("Delete", delete_rid, old_meta, this->table_info_, version_link, txn, txn_mgr);
-
-    // self-modification
-    if (old_meta.ts_ == txn->GetTransactionId()) {
-      // if has undo_log, update the undo_log
-      if (version_link.prev_.IsValid()) {
-        auto [prev_txn, log_idx] = version_link.prev_;
-        BUSTUB_ASSERT(prev_txn == txn->GetTransactionId(), "if self-modification, prev_version must in itself.\n");
-
-        auto undo_log = txn->GetUndoLog(log_idx);
-
-        std::vector<Column> cols;
-        for (size_t idx = 0; idx < schema.GetColumnCount(); ++idx) {
-          if (undo_log.modified_fields_[idx]) {
-            cols.emplace_back(schema.GetColumn(idx));
-          }
-        }
-        Schema old_modified_schema = Schema{cols};
-
-        std::vector<Value> vals;
-        for (size_t idx = 0, modified_idx = 0; idx < schema.GetColumnCount(); ++idx) {
-          if (undo_log.modified_fields_[idx]) {
-            vals.emplace_back(undo_log.tuple_.GetValue(&old_modified_schema, modified_idx++));
-          } else {
-            undo_log.modified_fields_[idx] = true;
-            vals.emplace_back(delete_tuple.GetValue(&schema, idx));
-          }
-        }
-
-        undo_log.tuple_ = Tuple{vals, &schema};
-        txn->ModifyUndoLog(log_idx, undo_log);
-      }
-    } else {
-      // generate the undo log, and link them together
-      UndoLog undo_log{false, std::vector<bool>(schema.GetColumnCount(), true), delete_tuple, old_meta.ts_};
-      if (version_link.prev_.IsValid()) {
-        undo_log.prev_version_ = version_link.prev_;
-      }
-
-      auto undo_link = txn->AppendUndoLog(undo_log);
-      version_link.prev_ = undo_link;
-      txn->AppendWriteSet(this->table_info_->oid_, delete_rid);
-    }
-
-    // update the tuple meta
-    this->table_info_->table_->UpdateTupleMeta({txn->GetTransactionId(), true}, delete_rid);
-
-    version_link.in_progress_ = false;
-    txn_mgr->UpdateVersionLink(delete_rid, std::make_optional(version_link), nullptr);
+    DeleteTuple(delete_tuple, delete_rid, schema, this->table_info_, txn, txn_mgr);
   }
 
   if (!this->delete_finished_) {

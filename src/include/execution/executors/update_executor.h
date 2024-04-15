@@ -70,5 +70,7 @@ class UpdateExecutor : public AbstractExecutor {
   std::unique_ptr<AbstractExecutor> child_executor_;
 
   bool update_finished_{false};
+
+  auto IsPrimaryKeyUpdate(Tuple &tuple) -> bool;
 };
 }  // namespace bustub

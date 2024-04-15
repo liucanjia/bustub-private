@@ -149,6 +149,142 @@ void PreCheck(std::string_view type, RID &rid, TupleMeta &meta, const TableInfo 
   }
 }
 
+auto IsExistIndex(Tuple &tuple, Schema &schema, const std::vector<IndexInfo *> &table_indexs, Transaction *txn,
+                  std::vector<RID> &result) -> bool {
+  // check if the tuple already exists in the index
+  for (auto index_info : table_indexs) {
+    auto key_schema = *index_info->index_->GetKeySchema();
+    auto key_attrs = index_info->index_->GetKeyAttrs();
+    index_info->index_->ScanKey(tuple.KeyFromTuple(schema, key_schema, key_attrs), &result, txn);
+    // all index will return same result
+    if (!result.empty()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void InsertTuple(Tuple &tuple, Schema &schema, const TableInfo *table_info,
+                 const std::vector<IndexInfo *> &table_indexs, Transaction *txn, TransactionManager *txn_mgr) {
+  // check if the tuple already exists in the index
+  std::vector<RID> result;
+
+  if (IsExistIndex(tuple, schema, table_indexs, txn, result)) {
+    BUSTUB_ASSERT(result.size() <= 1, "Only primary index, so index must be exist one or none.\n");
+
+    auto old_rid = result[0];
+    auto [old_meta, old_tuple] = table_info->table_->GetTuple(old_rid);
+
+    // if index already exists and old tuple is delete, update the tuple inplace
+    if ((old_meta.ts_ < TXN_START_ID || old_meta.ts_ == txn->GetTransactionId()) && old_meta.is_deleted_) {
+      if (old_meta.ts_ < TXN_START_ID) {
+        VersionUndoLink version_link;
+        PreCheck("Insert", old_rid, old_meta, table_info, version_link, txn, txn_mgr);
+
+        // generate the undo log, and link them together
+        UndoLog undo_log{true, std::vector<bool>(schema.GetColumnCount(), true), old_tuple, old_meta.ts_};
+        if (auto undo_link = version_link.prev_; undo_link.IsValid()) {
+          undo_log.prev_version_ = undo_link;
+        }
+
+        auto undo_link = txn->AppendUndoLog(undo_log);
+        version_link.prev_ = undo_link;
+        txn->AppendWriteSet(table_info->oid_, old_rid);
+
+        table_info->table_->UpdateTupleInPlace({txn->GetTransactionId(), false}, tuple, old_rid);
+        version_link.in_progress_ = false;
+        txn_mgr->UpdateVersionLink(old_rid, std::make_optional(version_link), nullptr);
+      } else {
+        // update tuple inplace
+        table_info->table_->UpdateTupleInPlace({txn->GetTransactionId(), false}, tuple, old_rid);
+      }
+      return;
+    }
+    // tuple already exist, abort the transaction
+    txn->SetTainted();
+    throw ExecutionException("Insert tuple has already exist.\n");
+  }
+
+  InsertNewTuple(tuple, table_info, table_indexs, txn);
+}
+
+void InsertNewTuple(Tuple &tuple, const TableInfo *table_info, const std::vector<IndexInfo *> &table_indexs,
+                    Transaction *txn) {
+  // insert new tuple
+  if (auto new_rid = table_info->table_->InsertTuple({txn->GetTransactionId(), false}, tuple);
+      new_rid != std::nullopt) {
+    // update the transaction write set
+    txn->AppendWriteSet(table_info->oid_, new_rid.value());
+    // update the indexs
+    for (auto index_info : table_indexs) {
+      auto key_schema = *index_info->index_->GetKeySchema();
+      auto key_attrs = index_info->index_->GetKeyAttrs();
+      // create index
+      if (!index_info->index_->InsertEntry(tuple.KeyFromTuple(table_info->schema_, key_schema, key_attrs),
+                                           new_rid.value(), txn)) {
+        // if index already exist, throw exception
+        txn->SetTainted();
+        throw ExecutionException("Insert tuple has already exist.\n");
+      }
+    }
+  }
+}
+
+void DeleteTuple(const Tuple &tuple, RID rid, Schema &schema, const TableInfo *table_info, Transaction *txn,
+                 TransactionManager *txn_mgr) {
+  TupleMeta meta;
+  VersionUndoLink version_link;
+  PreCheck("Delete", rid, meta, table_info, version_link, txn, txn_mgr);
+
+  // self-modification
+  if (meta.ts_ == txn->GetTransactionId()) {
+    // if has undo_log, update the undo_log
+    if (version_link.prev_.IsValid()) {
+      auto [prev_txn, log_idx] = version_link.prev_;
+      BUSTUB_ASSERT(prev_txn == txn->GetTransactionId(), "if self-modification, prev_version must in itself.\n");
+
+      auto undo_log = txn->GetUndoLog(log_idx);
+
+      std::vector<Column> cols;
+      for (size_t idx = 0; idx < schema.GetColumnCount(); ++idx) {
+        if (undo_log.modified_fields_[idx]) {
+          cols.emplace_back(schema.GetColumn(idx));
+        }
+      }
+      Schema old_modified_schema = Schema{cols};
+
+      std::vector<Value> vals;
+      for (size_t idx = 0, modified_idx = 0; idx < schema.GetColumnCount(); ++idx) {
+        if (undo_log.modified_fields_[idx]) {
+          vals.emplace_back(undo_log.tuple_.GetValue(&old_modified_schema, modified_idx++));
+        } else {
+          undo_log.modified_fields_[idx] = true;
+          vals.emplace_back(tuple.GetValue(&schema, idx));
+        }
+      }
+
+      undo_log.tuple_ = Tuple{vals, &schema};
+      txn->ModifyUndoLog(log_idx, undo_log);
+    }
+  } else {
+    // generate the undo log, and link them together
+    UndoLog undo_log{false, std::vector<bool>(schema.GetColumnCount(), true), tuple, meta.ts_};
+    if (version_link.prev_.IsValid()) {
+      undo_log.prev_version_ = version_link.prev_;
+    }
+
+    auto undo_link = txn->AppendUndoLog(undo_log);
+    version_link.prev_ = undo_link;
+    txn->AppendWriteSet(table_info->oid_, rid);
+  }
+
+  // update the tuple meta
+  table_info->table_->UpdateTupleMeta({txn->GetTransactionId(), true}, rid);
+
+  version_link.in_progress_ = false;
+  txn_mgr->UpdateVersionLink(rid, std::make_optional(version_link), nullptr);
+}
+
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
                TableHeap *table_heap) {
   // always use stderr for printing logs...

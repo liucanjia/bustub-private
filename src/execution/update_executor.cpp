@@ -32,17 +32,40 @@ void UpdateExecutor::Init() {
 }
 
 auto UpdateExecutor::Next(Tuple *tuple, RID *rid) -> bool {
+  size_t insert_cnt = 0;
   auto target_exprs = this->plan_->target_expressions_;
   auto schema = this->table_info_->schema_;
   auto txn = this->exec_ctx_->GetTransaction();
   auto txn_mgr = this->exec_ctx_->GetTransactionManager();
 
   std::vector<std::pair<Tuple, RID>> old_tuples;
+  std::vector<Tuple> primary_update_tuples;
   while (this->child_executor_->Next(tuple, rid)) {
-    old_tuples.emplace_back(std::make_pair(std::move(*tuple), *rid));
+    ++insert_cnt;
+    // if update primary key
+    if (this->IsPrimaryKeyUpdate(*tuple)) {
+      // delete the old tuple
+      DeleteTuple(*tuple, *rid, schema, this->table_info_, txn, txn_mgr);
+      primary_update_tuples.emplace_back(std::move(*tuple));
+    } else {
+      old_tuples.emplace_back(std::make_pair(std::move(*tuple), *rid));
+    }
+  }
+
+  for (auto &&old_tuple : primary_update_tuples) {
+    // generate the new tuple
+    std::vector<Value> tuple_vals;
+    tuple_vals.reserve(target_exprs.size());
+    for (const auto &expr : target_exprs) {
+      tuple_vals.emplace_back(expr->Evaluate(&old_tuple, schema));
+    }
+
+    auto new_tuple = Tuple{tuple_vals, &schema};
+    InsertTuple(new_tuple, schema, this->table_info_, this->table_indexs_, txn, txn_mgr);
   }
 
   for (auto &&[old_tuple, old_rid] : old_tuples) {
+    // generate the new tuple
     std::vector<Value> tuple_vals;
     tuple_vals.reserve(target_exprs.size());
     for (const auto &expr : target_exprs) {
@@ -133,14 +156,35 @@ auto UpdateExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   }
 
   if (!this->update_finished_) {
-    if (old_tuples.empty()) {
-      // 存在无法从底下算子拿到tuple的情况, 这时要抛出错误(暂时不懂为什么地下Scan算子返回为空)
+    if (insert_cnt == 0) {
+      // 存在无法从底下算子拿到tuple的情况, 这时要抛出错误(暂时不懂为什么底下Scan算子返回为空)
       txn->SetTainted();
       throw ExecutionException("");
     }
-    *tuple = Tuple{{ValueFactory::GetIntegerValue(old_tuples.size())}, &this->plan_->OutputSchema()};
+    *tuple = Tuple{{ValueFactory::GetIntegerValue(insert_cnt)}, &this->plan_->OutputSchema()};
     this->update_finished_ = true;
     return true;
+  }
+
+  return false;
+}
+
+auto UpdateExecutor::IsPrimaryKeyUpdate(Tuple &tuple) -> bool {
+  auto target_expr = this->plan_->target_expressions_;
+  auto schema = this->table_info_->schema_;
+
+  for (auto index_info : this->table_indexs_) {
+    auto key_schema = *index_info->index_->GetKeySchema();
+    auto key_attrs = index_info->index_->GetKeyAttrs();
+
+    for (auto idx : key_attrs) {
+      auto old_value = tuple.GetValue(&schema, idx);
+      auto new_value = target_expr[idx]->Evaluate(&tuple, schema);
+
+      if (!old_value.CompareExactlyEquals(new_value)) {
+        return true;
+      }
+    }
   }
 
   return false;
